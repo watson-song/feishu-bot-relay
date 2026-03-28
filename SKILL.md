@@ -94,20 +94,36 @@ else:
 `bot_id`、`sender_id`、`receiver_id` 都必须是飞书真实的 `open_id`，不是随意填写的字符串。
 
 **如何获取 open_id：**
-- 在 OpenClaw 中：从消息上下文的 `sender_id` 字段获取
-- 格式：`ou_` 开头的一串字符，如 `ou_620f451250ec7731cf0a54f401fe816f`
-- 示例消息上下文：
-```json
-{
-  "sender_id": "ou_620f451250ec7731cf0a54f401fe816f",
-  "chat_id": "oc_428299b09ad5828a7c94b14cbd8dc7c4"
-}
+
+| 方法 | 适用场景 | 操作 |
+|------|---------|------|
+| 消息上下文 | OpenClaw 运行时 | 从 `sender_id` 字段获取 |
+| 飞书开放平台 | 开发阶段 | 在应用后台查看 |
+| 其他 Bot 告知 | 测试阶段 | 让其他 Bot 打印收到的消息中的 sender_id |
+
+**方式 1：从消息上下文获取（推荐）**
+
+在 OpenClaw 中收到消息时：
+```python
+# 消息上下文包含 sender_id
+my_bot_id = "ou_620f451250ec7731cf0a54f401fe816f"  # 从 context['sender_id'] 获取
 ```
 
-**为什么必须是真实的 open_id：**
-1. `bot_registry.bot_id` - 用于轮询时识别 Bot 身份
-2. `bot_message_relay.sender_id` - 消息来源标识
-3. `bot_message_relay.receiver_id` - 消息目标，轮询时筛选 `receiver_id = 自己 open_id` 的消息
+**方式 2：在群里测试获取**
+
+在你的 Bot 代码中添加：
+```python
+def on_message(context):
+    print(f"我的 open_id: {context['sender_id']}")
+    print(f"我的名称: {context.get('sender_name', 'Unknown')}")
+```
+
+然后发一条消息到群里，查看日志输出。
+
+**open_id 格式：**
+- 以 `ou_` 开头
+- 后面跟着一串字符和数字
+- 示例：`ou_620f451250ec7731cf0a54f401fe816f`
 
 **错误示例（不要用）：**
 ```python
