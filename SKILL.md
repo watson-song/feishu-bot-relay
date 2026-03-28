@@ -89,12 +89,37 @@ else:
     print(f"注册失败: {result['error']}")
 ```
 
-**⚠️ 重要：bot_id 必须是飞书 open_id**
+**⚠️ 重要：所有 ID 必须是飞书 open_id**
 
-`bot_id` 不是随意填写的字符串，必须是 Bot 在飞书中的真实 `open_id`。获取方式：
+`bot_id`、`sender_id`、`receiver_id` 都必须是飞书真实的 `open_id`，不是随意填写的字符串。
+
+**如何获取 open_id：**
 - 在 OpenClaw 中：从消息上下文的 `sender_id` 字段获取
 - 格式：`ou_` 开头的一串字符，如 `ou_620f451250ec7731cf0a54f401fe816f`
-- 作用：用于消息轮询时匹配 `receiver_id`，确保消息发送到正确的 Bot
+- 示例消息上下文：
+```json
+{
+  "sender_id": "ou_620f451250ec7731cf0a54f401fe816f",
+  "chat_id": "oc_428299b09ad5828a7c94b14cbd8dc7c4"
+}
+```
+
+**为什么必须是真实的 open_id：**
+1. `bot_registry.bot_id` - 用于轮询时识别 Bot 身份
+2. `bot_message_relay.sender_id` - 消息来源标识
+3. `bot_message_relay.receiver_id` - 消息目标，轮询时筛选 `receiver_id = 自己 open_id` 的消息
+
+**错误示例（不要用）：**
+```python
+bot_id="my_bot"           # ❌ 错误
+bot_id="test_bot_001"     # ❌ 错误
+bot_id="ou_test_jvsclaw"  # ❌ 错误（不是飞书分配的）
+```
+
+**正确示例（要用）：**
+```python
+bot_id="ou_620f451250ec7731cf0a54f401fe816f"  # ✅ 正确
+```
 
 **auto_register 返回值：**
 - `action: "created"` - Bot 是新注册的
@@ -148,12 +173,14 @@ client = RelayClient(app_token, table_id_relay)
 client.write_message({
     "msg_id": generate_uuid(),           # 唯一消息ID
     "chat_id": chat_id,
-    "sender_id": "本Bot的open_id",       # 自已
-    "receiver_id": "目标Bot的open_id",   # 要触发的 Bot
+    "sender_id": "ou_xxx",               # ⚠️ 本Bot的真实open_id
+    "receiver_id": "ou_yyy",             # ⚠️ 目标Bot的真实open_id（从bot_registry查询）
     "content": "需要处理的内容",
     "quote_msg_id": original_message_id  # 可选：引用的原消息
 })
 ```
+
+**注意：** `sender_id` 和 `receiver_id` 必须是飞书真实的 `open_id`，格式为 `ou_` 开头。
 
 ### 轮询消息（接收 Bot）
 
@@ -209,7 +236,7 @@ from scripts.relay_client import RelayClient, BotRegistry
 APP_TOKEN = "xxx"
 TABLE_RELAY = "xxx"
 TABLE_REGISTRY = "xxx"
-MY_BOT_ID = "ou_xxx"
+MY_BOT_ID = "ou_xxx"  # ⚠️ 必须是本Bot的真实open_id（从飞书消息上下文获取）
 
 # 初始化
 relay = RelayClient(APP_TOKEN, TABLE_RELAY)
@@ -223,11 +250,12 @@ def on_user_message(chat_id, sender_id, content):
         return "Bot-B 未注册"
     
     # 2. 写入消息到 Bitable
+    # ⚠️ sender_id 和 receiver_id 必须是真实的 open_id
     relay.write_message({
         "msg_id": str(uuid.uuid4()),
         "chat_id": chat_id,
-        "sender_id": MY_BOT_ID,
-        "receiver_id": target_bot["bot_id"],
+        "sender_id": MY_BOT_ID,                    # 本Bot的真实open_id
+        "receiver_id": target_bot["bot_id"],       # 目标Bot的真实open_id
         "content": f"用户 {sender_id} 请求：{content}"
     })
     
@@ -235,6 +263,7 @@ def on_user_message(chat_id, sender_id, content):
 
 # 场景：轮询消费其他 Bot 发给我的消息
 def poll_and_process():
+    # ⚠️ receiver_id 必须是本Bot的真实open_id
     messages = relay.poll_messages(receiver_id=MY_BOT_ID)
     
     for msg in messages:
