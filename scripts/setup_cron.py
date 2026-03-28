@@ -68,11 +68,17 @@ def list_cron_jobs():
         return f"Error: {e}"
 
 
-def add_cron_job(name, schedule, task):
-    """添加定时任务"""
+def add_cron_job(name, every_duration, task):
+    """添加定时任务
+    
+    Args:
+        name: 任务名称
+        every_duration: 执行间隔，格式如 "30s", "1m", "5m"
+        task: 要执行的命令
+    """
     try:
         result = subprocess.run(
-            ["openclaw", "cron", "add", "--name", name, "--schedule", schedule, "--task", task],
+            ["openclaw", "cron", "add", "--name", name, "--every", every_duration, "--task", task],
             capture_output=True,
             text=True,
             timeout=10
@@ -172,32 +178,32 @@ def setup_cron(bot_id, app_token, table_id_relay, table_id_registry, interval=30
         f"--interval {interval}"
     )
     
-    # 生成 cron 表达式
+    # 生成 duration 格式（OpenClaw --every 参数格式）
     if interval < 60:
         # 每 N 秒
-        schedule = f"*/{interval} * * * * *"
+        every_duration = f"{interval}s"
     elif interval < 3600:
         # 每 N 分钟
         minutes = interval // 60
-        schedule = f"0 */{minutes} * * * *"
+        every_duration = f"{minutes}m"
     else:
         # 每 N 小时
         hours = interval // 3600
-        schedule = f"0 0 */{hours} * * *"
+        every_duration = f"{hours}h"
     
     job_name = f"feishu-relay-{bot_id[:8]}"
     
     print(f"⏰ 定时任务配置：")
     print(f"   名称: {job_name}")
-    print(f"   调度: {schedule}")
-    print(f"   间隔: {interval}秒")
+    print(f"   间隔: {every_duration}")
+    print(f"   命令: {task[:80]}...")
     print()
     
     # 先删除已存在的同名任务
     remove_cron_job(job_name)
     
     # 添加新任务
-    success, stdout, stderr = add_cron_job(job_name, schedule, task)
+    success, stdout, stderr = add_cron_job(job_name, every_duration, task)
     
     if success:
         print("✅ 定时任务创建成功！")
