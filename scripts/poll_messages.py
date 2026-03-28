@@ -10,6 +10,10 @@ Bot 定期轮询 Bitable，处理发给自已的消息
         --table-id-relay "xxx" \
         --table-id-registry "xxx" \
         --interval 30
+
+注意:
+    此脚本需要在 OpenClaw 环境中运行，或手动提供 tool_caller
+    才能正常调用飞书 Bitable API
 """
 
 import argparse
@@ -22,7 +26,7 @@ from datetime import datetime
 # 添加脚本目录到路径
 sys.path.insert(0, '/root/.openclaw/workspace/skills/feishu-bot-relay/scripts')
 
-from relay_client import RelayClient, BotRegistry
+from relay_client import OpenClawRelayClient, OpenClawBotRegistry
 
 
 class MessagePoller:
@@ -31,7 +35,7 @@ class MessagePoller:
     def __init__(self, bot_id: str, bot_name: str, app_token: str, 
                  table_id_relay: str, table_id_registry: str, 
                  interval: int = 30, lock_timeout: int = 30,
-                 handler=None):
+                 handler=None, tool_caller=None):
         """
         初始化轮询器
         
@@ -44,6 +48,7 @@ class MessagePoller:
             interval: 轮询间隔秒数
             lock_timeout: 锁过期时间秒数
             handler: 消息处理函数，接收 msg 返回 response
+            tool_caller: OpenClaw 工具调用器 (feishu_bitable_app_table_record)
         """
         self.bot_id = bot_id
         self.bot_name = bot_name
@@ -51,14 +56,20 @@ class MessagePoller:
         self.instance_id = f"{bot_name}-{int(time.time())}"
         self.running = False
         self.handler = handler or self._default_handler
+        self.tool_caller = tool_caller
         
-        # 初始化客户端
-        self.relay = RelayClient(
+        # 初始化客户端（使用 OpenClaw 集成版本）
+        self.relay = OpenClawRelayClient(
             app_token=app_token,
             table_id=table_id_relay,
             lock_timeout=lock_timeout
         )
-        self.registry = BotRegistry(app_token, table_id_registry)
+        self.registry = OpenClawBotRegistry(app_token, table_id_registry)
+        
+        # 绑定工具调用器
+        if tool_caller:
+            self.relay.set_tool_caller(tool_caller)
+            self.registry.set_tool_caller(tool_caller)
         
     def start(self):
         """启动轮询循环"""
@@ -267,6 +278,17 @@ def main():
     else:
         handler = create_command_handler(args.bot_name)
     
+    # 尝试获取 OpenClaw 工具调用器
+    tool_caller = None
+    try:
+        # 在 OpenClaw 环境中，feishu_bitable_app_table_record 可用
+        from openclaw.tools import feishu_bitable_app_table_record
+        tool_caller = feishu_bitable_app_table_record
+        print("[INFO] 已检测到 OpenClaw 环境，工具调用器已绑定")
+    except ImportError:
+        print("[WARN] 未检测到 OpenClaw 环境，轮询功能将无法正常工作")
+        print("[WARN] 请在 OpenClaw 环境中运行此脚本，或手动提供 tool_caller")
+    
     # 创建轮询器
     poller = MessagePoller(
         bot_id=args.bot_id,
@@ -276,7 +298,8 @@ def main():
         table_id_registry=args.table_id_registry,
         interval=args.interval,
         lock_timeout=args.lock_timeout,
-        handler=handler
+        handler=handler,
+        tool_caller=tool_caller
     )
     
     # 启动
