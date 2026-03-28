@@ -247,7 +247,33 @@ bot_id="ou_620f451250ec7731cf0a54f401fe816f"  # ✅ 正确
 
 安装本 Skill 后，**需要额外启动一个定时任务**来轮询 Bitable。这是去中心化设计的必然要求——每个 Bot 需要自己检查是否有新消息。
 
-**方式 1：使用 cron 定时任务（推荐）**
+**方式 1：一键配置脚本（⭐ 推荐）**
+
+使用提供的 `setup_cron.py` 脚本自动配置：
+
+```bash
+# 交互式配置（推荐）
+python scripts/setup_cron.py --interactive
+
+# 自动配置（提供所有参数）
+python scripts/setup_cron.py \
+  --bot-id "ou_xxx" \
+  --app-token "DIDybsDewa1pjnsSFkLcq3eonLh" \
+  --table-id-relay "tbllWOJleehmXMVw" \
+  --table-id-registry "tblm482wYr6GZIW9" \
+  --interval 30
+
+# 检查当前定时任务状态
+python scripts/setup_cron.py --check
+```
+
+脚本会自动：
+- ✅ 检查 OpenClaw 是否安装
+- ✅ 列出当前定时任务
+- ✅ 创建轮询定时任务
+- ✅ 验证配置是否成功
+
+**方式 2：使用 cron 定时任务（手动）**
 
 在 OpenClaw 中配置定时任务：
 
@@ -265,7 +291,7 @@ openclaw cron add \
 */1 * * * * cd /path/to/feishu-bot-relay && python scripts/poll_messages.py --once >> /var/log/relay.log 2>&1
 ```
 
-**方式 2：后台持续运行**
+**方式 3：后台持续运行**
 
 ```bash
 nohup python scripts/poll_messages.py \
@@ -277,7 +303,7 @@ nohup python scripts/poll_messages.py \
   > relay.log 2>&1 &
 ```
 
-**方式 3：集成到 OpenClaw Skill 中**
+**方式 4：集成到 OpenClaw Skill 中**
 
 如果你开发的是 OpenClaw Skill，可以在收到普通消息时顺便检查：
 
@@ -291,7 +317,7 @@ def on_message(context):
         process_relay_message(msg)
 ```
 
-**方式 4：手动查询（仅测试）**
+**方式 5：手动查询（仅测试）**
 
 ```bash
 # 一次性查询（不持续轮询）
@@ -671,14 +697,33 @@ if __name__ == "__main__":
 
 - `REQUIREMENTS.md` - 详细需求文档和测试用例
 - `scripts/init_bitable.py` - Bitable 初始化脚本
-- `scripts/relay_client.py` - 核心客户端库（含 BotRegistry）
+- `scripts/relay_client.py` - 核心客户端库（含 BotRegistry、OpenClawRelayClient）
+- `scripts/setup_cron.py` - 定时任务一键配置脚本 ⭐
 - `scripts/poll_messages.py` - 轮询消费示例
 - `scripts/message_handler.py` - 消息处理模板
+- `scripts/get_bot_info.py` - Bot 信息获取工具
+
+## 快速开始（5 分钟上手）
+
+```bash
+# 1. 克隆代码
+git clone https://git.code.tencent.com/watson_song/feishu-bot-relay.git
+cd feishu-bot-relay
+
+# 2. 初始化 Bitable（或获取现有配置）
+python scripts/init_bitable.py --app-token xxx --folder-token xxx
+
+# 3. 配置定时轮询任务（⭐ 关键！）
+python scripts/setup_cron.py --interactive
+
+# 4. 完成！现在可以发送/接收 Bitable 中继消息了
+```
 
 ## 注意事项
 
-1. Bitable 文本字段有长度限制（约 1 万字符），超长消息会被截断
-2. 轮询频率建议 10-30 秒，避免触发飞书 API 限流
-3. 每个 Bot 实例应有唯一的 `lock_holder` 标识
-4. 定期清理已完成的消息（可配置保留天数）
-5. 确保所有 Bot 都被邀请加入 Bitable 并有编辑权限
+1. **必须配置定时任务**：没有轮询就收不到消息！运行 `python scripts/setup_cron.py --interactive`
+2. Bitable 文本字段有长度限制（约 1 万字符），超长消息会被截断
+3. 轮询频率建议 10-30 秒，避免触发飞书 API 限流
+4. 每个 Bot 实例应有唯一的 `lock_holder` 标识
+5. 定期清理已完成的消息（可配置保留天数）
+6. 确保所有 Bot 都被邀请加入 Bitable 并有编辑权限
