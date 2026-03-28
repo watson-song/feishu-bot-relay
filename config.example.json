@@ -1,0 +1,13 @@
+{
+  "feishu_bot_relay": {
+    "app_token": "请填写 Bitable 应用的 app_token",
+    "table_id_relay": "请填写 bot_message_relay 表的 table_id",
+    "table_id_registry": "请填写 bot_registry 表的 table_id",
+    "bot_id": "请填写本 Bot 的 open_id",
+    "bot_name": "Bot 显示名称",
+    "poll_interval": 30,
+    "lock_timeout": 30,
+    "max_retries": 3,
+    "retry_delay": 1
+  }
+}
