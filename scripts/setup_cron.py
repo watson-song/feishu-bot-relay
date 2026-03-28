@@ -68,17 +68,18 @@ def list_cron_jobs():
         return f"Error: {e}"
 
 
-def add_cron_job(name, every_duration, task):
+def add_cron_job(name, every_duration, task, channel="feishu"):
     """添加定时任务
     
     Args:
         name: 任务名称
         every_duration: 执行间隔，格式如 "30s", "1m", "5m"
         task: 要执行的命令
+        channel: 消息发送频道，默认 feishu
     """
     try:
         result = subprocess.run(
-            ["openclaw", "cron", "add", "--name", name, "--every", every_duration, "--task", task],
+            ["openclaw", "cron", "add", "--name", name, "--every", every_duration, "--task", task, "--channel", channel],
             capture_output=True,
             text=True,
             timeout=10
@@ -202,11 +203,12 @@ def setup_cron(bot_id, app_token, table_id_relay, table_id_registry, interval=30
     # 先删除已存在的同名任务
     remove_cron_job(job_name)
     
-    # 添加新任务
-    success, stdout, stderr = add_cron_job(job_name, every_duration, task)
+    # 添加新任务（指定 feishu 频道）
+    success, stdout, stderr = add_cron_job(job_name, every_duration, task, channel="feishu")
     
     if success:
         print("✅ 定时任务创建成功！")
+        print(f"   频道: feishu")
         print()
         print("📋 验证命令：")
         print(f"   openclaw cron list")
