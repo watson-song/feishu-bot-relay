@@ -49,6 +49,47 @@ description: 飞书 Bot 消息中转系统，基于 Bitable 实现 Bot 间通信
 | 用户 @ 你的 Bot | **不使用**，直接处理飞书消息事件 |
 | 你的 Bot 需要触发其他 Bot | **使用**，写 Bitable 让目标 Bot 接收 |
 
+### 消息如何自动写入？
+
+**⚠️ 重要：消息不会自动写入 Bitable！**
+
+本 Skill 提供工具和方法，但**需要你在代码中显式调用**写入。
+
+**Bot 收到 @ 消息后自动转发给其他 Bot：**
+
+```python
+from scripts.relay_client import RelayClient, BotRegistry
+
+# 收到群消息时
+def on_message(context):
+    content = context["content"]
+    
+    # 检查是否 @ 了其他 Bot
+    registry = BotRegistry(app_token, table_id_registry)
+    
+    # 解析消息中的 @ 目标
+    for bot in registry.get_all_bots():
+        if f"@{bot['bot_name']}" in content:
+            # ⚠️ 这里显式写入 Bitable
+            relay = RelayClient(app_token, table_id_relay)
+            relay.write_message({
+                "msg_id": str(uuid.uuid4()),
+                "chat_id": context["chat_id"],
+                "sender_id": context["sender_id"],
+                "receiver_id": bot["bot_id"],  # 目标 Bot
+                "content": content,
+                "quote_msg_id": context["message_id"]
+            })
+            return f"已转发给 {bot['bot_name']}"
+```
+
+**总结：**
+- ❌ 安装 Skill 不会自动拦截 @ 消息
+- ✅ 需要你在 `on_message` 中显式调用 `write_message()`
+- ✅ Skill 提供了封装好的工具，但调用权在你
+
+---
+
 ### 初始化与注册
 
 #### 1. 初始化 Bitable
@@ -200,17 +241,64 @@ bot_id="ou_620f451250ec7731cf0a54f401fe816f"  # ✅ 正确
 }
 ```
 
-### 4. 启动轮询
+### 4. 启动轮询（⚠️ 必须）
 
-每个 Bot 独立启动轮询：
+**⚠️ 重要：必须启动轮询才能接收消息！**
+
+安装本 Skill 后，**需要额外启动一个定时任务**来轮询 Bitable。这是去中心化设计的必然要求——每个 Bot 需要自己检查是否有新消息。
+
+**方式 1：使用 cron 定时任务（推荐）**
+
+在 OpenClaw 中配置定时任务：
 
 ```bash
-python scripts/poll_messages.py \
-  --bot-id "Bot-B的open_id" \
+# 每 30 秒轮询一次
+openclaw cron add \
+  --name "feishu-relay-poll" \
+  --schedule "*/30 * * * * *" \
+  --task "python scripts/poll_messages.py --bot-id '你的open_id' --app-token 'xxx' --table-id-relay 'xxx' --table-id-registry 'xxx'"
+```
+
+或使用 systemd/crontab：
+```bash
+# crontab -e
+*/1 * * * * cd /path/to/feishu-bot-relay && python scripts/poll_messages.py --once >> /var/log/relay.log 2>&1
+```
+
+**方式 2：后台持续运行**
+
+```bash
+nohup python scripts/poll_messages.py \
+  --bot-id "你的open_id" \
   --app-token "xxx" \
   --table-id-relay "xxx" \
-  --table-id-registry "xxx"
+  --table-id-registry "xxx" \
+  --interval 30 \
+  > relay.log 2>&1 &
 ```
+
+**方式 3：集成到 OpenClaw Skill 中**
+
+如果你开发的是 OpenClaw Skill，可以在收到普通消息时顺便检查：
+
+```python
+def on_message(context):
+    # 处理普通消息...
+    
+    # 顺便检查 Bitable 中是否有给自己的消息
+    messages = relay.poll_messages(receiver_id=self.bot_id)
+    for msg in messages:
+        process_relay_message(msg)
+```
+
+**方式 4：手动查询（仅测试）**
+
+```bash
+# 一次性查询（不持续轮询）
+python scripts/poll_messages.py --once
+```
+
+---
 
 ## 核心接口
 
