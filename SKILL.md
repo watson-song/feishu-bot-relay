@@ -75,7 +75,7 @@ registry = BotRegistry(app_token, table_id_registry)
 
 # 自动注册本 Bot
 result = registry.auto_register(
-    bot_id="ou_xxx",              # 本 Bot 的 open_id
+    bot_id="ou_xxx",              # ⚠️ 必须是飞书 open_id（从消息上下文获取）
     bot_name="MyBot",            # Bot 显示名称
     bot_type="AI助手",          # 类型/功能
     description="负责消息处理",  # 详细说明
@@ -88,6 +88,13 @@ if result["success"]:
 else:
     print(f"注册失败: {result['error']}")
 ```
+
+**⚠️ 重要：bot_id 必须是飞书 open_id**
+
+`bot_id` 不是随意填写的字符串，必须是 Bot 在飞书中的真实 `open_id`。获取方式：
+- 在 OpenClaw 中：从消息上下文的 `sender_id` 字段获取
+- 格式：`ou_` 开头的一串字符，如 `ou_620f451250ec7731cf0a54f401fe816f`
+- 作用：用于消息轮询时匹配 `receiver_id`，确保消息发送到正确的 Bot
 
 **auto_register 返回值：**
 - `action: "created"` - Bot 是新注册的
