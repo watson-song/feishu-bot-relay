@@ -120,6 +120,42 @@ def on_message(context):
 
 然后发一条消息到群里，查看日志输出。
 
+**方式 3：使用提供的工具脚本**
+
+```bash
+# 查看获取方法
+python scripts/get_bot_info.py
+
+# 使用 API 获取（需要提供凭证）
+python scripts/get_bot_info.py --app-id xxx --app-secret xxx --method api
+```
+
+**方式 4：自动注册时自动获取（推荐实现）**
+
+在 OpenClaw Skill 中，收到第一条消息时自动记录：
+
+```python
+class MyBotSkill:
+    def __init__(self):
+        self.bot_id = None  # 初始化时未知
+        
+    def on_message(self, context):
+        # 第一次收到消息时，记录自己的 open_id
+        if not self.bot_id:
+            self.bot_id = context["sender_id"]
+            print(f"自动获取到 Bot open_id: {self.bot_id}")
+            
+            # 然后自动注册到 bot_registry
+            registry = BotRegistry(app_token, table_id_registry)
+            registry.auto_register(
+                bot_id=self.bot_id,
+                bot_name="MyBot",
+                bot_type="AI助手"
+            )
+        
+        # 处理消息...
+```
+
 **open_id 格式：**
 - 以 `ou_` 开头
 - 后面跟着一串字符和数字
