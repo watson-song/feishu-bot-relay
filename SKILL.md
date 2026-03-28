@@ -302,22 +302,114 @@ python scripts/poll_messages.py --once
 
 ## 核心接口
 
-### 写入消息（发送 Bot）
+### ⚠️ 重要：如何使用本 Skill
 
-当 Bot 需要触发其他 Bot 时：
+本 Skill 提供 **两种使用方式**：
+
+| 方式 | 适用场景 | 说明 |
+|------|---------|------|
+| **直接调用工具**（推荐） | OpenClaw Skill | 直接使用 `feishu_bitable_*` 工具 |
+| **使用 SDK** | 独立运行 | 使用 `relay_client.py` 框架，需实现 API 调用 |
+
+**为什么 relay_client.py 是模拟实现？**
+
+`relay_client.py` 是**框架/SDK**，不是可直接运行的完整实现：
+- ✅ 提供业务逻辑封装（锁、状态流转、去重）
+- ✅ 提供接口定义
+- ⚠️ `_create_record`、`_update_record` 等是**模拟实现**
+- 实际使用时需要替换为真实 API 调用
+
+---
+
+### 方式 1：在 OpenClaw 中直接调用工具（推荐）
+
+在 OpenClaw Skill 中，**不要**使用 `relay_client.py` 的模拟方法，而是直接调用 OpenClaw 提供的 `feishu_bitable_*` 工具：
+
+```python
+# 写入消息
+def write_message(app_token, table_id, message):
+    result = feishu_bitable_app_table_record(
+        action="create",
+        app_token=app_token,
+        table_id=table_id,
+        fields={
+            "msg_id": message["msg_id"],
+            "chat_id": message["chat_id"],
+            "sender_id": message["sender_id"],
+            "receiver_id": message["receiver_id"],
+            "content": message["content"],
+            "status": "待处理",
+            "created_at": int(time.time() * 1000)
+        }
+    )
+    return result
+
+# 查询消息
+def poll_messages(app_token, table_id, receiver_id):
+    result = feishu_bitable_app_table_record(
+        action="list",
+        app_token=app_token,
+        table_id=table_id,
+        filter={
+            "conjunction": "and",
+            "conditions": [
+                {"field_name": "receiver_id", "operator": "is", "value": [receiver_id]},
+                {"field_name": "status", "operator": "is", "value": ["待处理"]}
+            ]
+        }
+    )
+    return result.get("records", [])
+```
+
+**这是推荐的使用方式**，因为：
+- ✅ 直接调用真实的飞书 API
+- ✅ 无需实现 `_create_record` 等模拟方法
+- ✅ 简单直接
+
+---
+
+### 方式 2：使用 SDK 框架（独立运行）
+
+如果你要在 OpenClaw 之外独立运行，可以使用 `relay_client.py` 框架，但需要实现 API 调用层：
 
 ```python
 from scripts.relay_client import RelayClient
 
-client = RelayClient(app_token, table_id_relay)
-client.write_message({
-    "msg_id": generate_uuid(),           # 唯一消息ID
-    "chat_id": chat_id,
-    "sender_id": "ou_xxx",               # ⚠️ 本Bot的真实open_id
-    "receiver_id": "ou_yyy",             # ⚠️ 目标Bot的真实open_id（从bot_registry查询）
-    "content": "需要处理的内容",
-    "quote_msg_id": original_message_id  # 可选：引用的原消息
-})
+class MyRelayClient(RelayClient):
+    def _create_record(self, fields):
+        # 实现真实的创建记录逻辑
+        # 例如：使用 requests 调用飞书 API
+        pass
+    
+    def _update_record(self, record_id, fields):
+        # 实现真实的更新记录逻辑
+        pass
+```
+
+---
+
+### 写入消息（发送 Bot）
+
+当 Bot 需要触发其他 Bot 时，**直接调用 OpenClaw 工具**：
+
+```python
+import uuid
+
+# 直接调用 feishu_bitable_app_table_record 工具
+feishu_bitable_app_table_record(
+    action="create",
+    app_token=app_token,
+    table_id=table_id_relay,
+    fields={
+        "msg_id": str(uuid.uuid4()),
+        "chat_id": chat_id,
+        "sender_id": "ou_xxx",               # ⚠️ 本Bot的真实open_id
+        "receiver_id": "ou_yyy",             # ⚠️ 目标Bot的真实open_id
+        "content": "需要处理的内容",
+        "status": "待处理",
+        "created_at": int(time.time() * 1000)
+    }
+)
 ```
 
 **注意：** `sender_id` 和 `receiver_id` 必须是飞书真实的 `open_id`，格式为 `ou_` 开头。
@@ -325,25 +417,71 @@ client.write_message({
 ### 轮询消息（接收 Bot）
 
 ```python
-messages = client.poll_messages(receiver_id="本Bot的open_id")
-for msg in messages:
-    if client.acquire_lock(msg["msg_id"], holder="instance-1"):
-        # 处理消息
-        response = process_message(msg)
-        # 更新状态
-        client.update_status(msg["msg_id"], "已完成", response)
-        # 回复到群聊
-        send_to_chat(chat_id, response)
+import time
+
+# 使用 OpenClaw 工具轮询
+messages = feishu_bitable_app_table_record(
+    action="list",
+    app_token=app_token,
+    table_id=table_id_relay,
+    filter={
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": "receiver_id", "operator": "is", "value": [my_bot_id]},
+            {"field_name": "status", "operator": "is", "value": ["待处理"]}
+        ]
+    }
+)
+
+for record in messages.get("records", []):
+    fields = record["fields"]
+    record_id = record["record_id"]
+    
+    # 抢锁（更新状态为"处理中"）
+    feishu_bitable_app_table_record(
+        action="update",
+        app_token=app_token,
+        table_id=table_id_relay,
+        record_id=record_id,
+        fields={
+            "status": "处理中",
+            "lock_holder": "instance-1",
+            "lock_expire_at": int(time.time() * 1000) + 30000  # 30秒后过期
+        }
+    )
+    
+    # 处理消息
+    response = process_message(fields["content"])
+    
+    # 更新状态为"已完成"
+    feishu_bitable_app_table_record(
+        action="update",
+        app_token=app_token,
+        table_id=table_id_relay,
+        record_id=record_id,
+        fields={
+            "status": "已完成",
+            "response": response,
+            "processed_at": int(time.time() * 1000)
+        }
+    )
 ```
 
 ### 读取 Bot 注册表
 
 ```python
-from scripts.relay_client import BotRegistry
+# 查询所有 Bot
+bots = feishu_bitable_app_table_record(
+    action="list",
+    app_token=app_token,
+    table_id=table_id_registry
+)
 
-registry = BotRegistry(app_token, table_id_registry)
-bots = registry.get_all_bots()  # 获取所有 Bot
-bot = registry.get_bot_by_name("Bot-A")  # 按名称查找
+# 按名称查找
+for record in bots.get("records", []):
+    fields = record["fields"]
+    if fields.get("bot_name") == "Bot-A":
+        bot_id = fields.get("bot_id")
 ```
 
 ## 并发控制
@@ -370,7 +508,7 @@ bot = registry.get_bot_by_name("Bot-A")  # 按名称查找
 
 ```python
 import uuid
-from scripts.relay_client import RelayClient, BotRegistry
+import time
 
 # 配置
 APP_TOKEN = "xxx"
@@ -378,55 +516,114 @@ TABLE_RELAY = "xxx"
 TABLE_REGISTRY = "xxx"
 MY_BOT_ID = "ou_xxx"  # ⚠️ 必须是本Bot的真实open_id（从飞书消息上下文获取）
 
-# 初始化
-relay = RelayClient(APP_TOKEN, TABLE_RELAY)
-registry = BotRegistry(APP_TOKEN, TABLE_REGISTRY)
-
 # 场景：收到用户消息，需要 Bot-B 协作
 def on_user_message(chat_id, sender_id, content):
-    # 1. 检查是否需要其他 Bot
-    target_bot = registry.get_bot_by_name("Bot-B")
+    # 1. 查询 Bot-B 的 open_id
+    bots = feishu_bitable_app_table_record(
+        action="list",
+        app_token=APP_TOKEN,
+        table_id=TABLE_REGISTRY,
+        filter={
+            "conjunction": "and",
+            "conditions": [{"field_name": "bot_name", "operator": "is", "value": ["Bot-B"]}]
+        }
+    )
+    
+    target_bot = None
+    for record in bots.get("records", []):
+        if record["fields"].get("bot_name") == "Bot-B":
+            target_bot = record["fields"]
+            break
+    
     if not target_bot:
         return "Bot-B 未注册"
     
     # 2. 写入消息到 Bitable
-    # ⚠️ sender_id 和 receiver_id 必须是真实的 open_id
-    relay.write_message({
-        "msg_id": str(uuid.uuid4()),
-        "chat_id": chat_id,
-        "sender_id": MY_BOT_ID,                    # 本Bot的真实open_id
-        "receiver_id": target_bot["bot_id"],       # 目标Bot的真实open_id
-        "content": f"用户 {sender_id} 请求：{content}"
-    })
+    feishu_bitable_app_table_record(
+        action="create",
+        app_token=APP_TOKEN,
+        table_id=TABLE_RELAY,
+        fields={
+            "msg_id": str(uuid.uuid4()),
+            "chat_id": chat_id,
+            "sender_id": MY_BOT_ID,                              # 本Bot的真实open_id
+            "receiver_id": target_bot.get("bot_id"),             # 目标Bot的真实open_id
+            "content": f"用户 {sender_id} 请求：{content}",
+            "status": "待处理",
+            "created_at": int(time.time() * 1000)
+        }
+    )
     
     return "已转发给 Bot-B 处理"
 
 # 场景：轮询消费其他 Bot 发给我的消息
 def poll_and_process():
-    # ⚠️ receiver_id 必须是本Bot的真实open_id
-    messages = relay.poll_messages(receiver_id=MY_BOT_ID)
+    # 查询发给我的待处理消息
+    messages = feishu_bitable_app_table_record(
+        action="list",
+        app_token=APP_TOKEN,
+        table_id=TABLE_RELAY,
+        filter={
+            "conjunction": "and",
+            "conditions": [
+                {"field_name": "receiver_id", "operator": "is", "value": [MY_BOT_ID]},
+                {"field_name": "status", "operator": "is", "value": ["待处理"]}
+            ]
+        }
+    )
     
-    for msg in messages:
+    for record in messages.get("records", []):
+        record_id = record["record_id"]
+        fields = record["fields"]
+        
         # 抢锁
-        if not relay.acquire_lock(msg["msg_id"], holder="instance-1"):
-            continue
+        feishu_bitable_app_table_record(
+            action="update",
+            app_token=APP_TOKEN,
+            table_id=TABLE_RELAY,
+            record_id=record_id,
+            fields={
+                "status": "处理中",
+                "lock_holder": "instance-1",
+                "lock_expire_at": int(time.time() * 1000) + 30000
+            }
+        )
         
         try:
             # 处理消息
-            result = process(msg["content"])
+            result = process_message(fields["content"])
             
-            # 更新状态
-            relay.update_status(msg["msg_id"], "已完成", result)
+            # 更新状态为已完成
+            feishu_bitable_app_table_record(
+                action="update",
+                app_token=APP_TOKEN,
+                table_id=TABLE_RELAY,
+                record_id=record_id,
+                fields={
+                    "status": "已完成",
+                    "response": result,
+                    "processed_at": int(time.time() * 1000)
+                }
+            )
             
             # 回复到群聊
-            send_reply(msg["chat_id"], result)
+            send_reply(fields["chat_id"], result)
             
         except Exception as e:
-            relay.update_status(msg["msg_id"], "失败", str(e))
+            # 更新状态为失败
+            feishu_bitable_app_table_record(
+                action="update",
+                app_token=APP_TOKEN,
+                table_id=TABLE_RELAY,
+                record_id=record_id,
+                fields={
+                    "status": "失败",
+                    "response": str(e)
+                }
+            )
 
 if __name__ == "__main__":
     # 启动轮询
-    import time
     while True:
         poll_and_process()
         time.sleep(30)
