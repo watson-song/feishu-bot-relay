@@ -635,35 +635,245 @@ class BotRegistry:
 class OpenClawRelayClient(RelayClient):
     """
     与 OpenClaw feishu_bitable 工具集成的客户端
-    在 OpenClaw 环境中使用此客户端
+    
+    在 OpenClaw 环境中使用此客户端，它会真正调用飞书 API
+    
+    使用示例:
+        # 在 OpenClaw Skill 中
+        from scripts.relay_client import OpenClawRelayClient
+        
+        client = OpenClawRelayClient(
+            app_token="xxx",
+            table_id="xxx"
+        )
+        
+        # 这些方法会真正调用 feishu_bitable_app_table_record 工具
+        client.write_message({...})
+        messages = client.poll_messages(receiver_id="ou_xxx")
     """
     
     def __init__(self, app_token: str, table_id: str, 
                  lock_timeout: int = 30, poll_interval: int = 30):
         super().__init__(app_token, table_id, lock_timeout, poll_interval)
-        # 在 OpenClaw 环境中，这些方法会被替换为实际工具调用
+        self._tool_caller = None
         
     def set_tool_caller(self, caller):
         """
         设置工具调用器
         
         Args:
-            caller: 工具调用函数，接收 (tool_name, params) 返回结果
+            caller: 工具调用函数，接收 (action, params) 返回结果
+                   例如：feishu_bitable_app_table_record 函数
         """
         self._tool_caller = caller
+    
+    def _call_tool(self, action: str, **params) -> Dict[str, Any]:
+        """
+        调用 OpenClaw 工具
+        
+        如果没有设置 tool_caller，则使用模拟实现（用于测试）
+        """
+        if self._tool_caller:
+            return self._tool_caller(action, **params)
+        # 如果没有设置工具调用器，使用父类的模拟实现
+        return super()._call_tool_method(action, **params)
+    
+    def _create_record(self, fields: Dict) -> Dict[str, Any]:
+        """
+        创建记录 - 真正调用飞书 API
+        """
+        result = self._call_tool(
+            "create",
+            app_token=self.app_token,
+            table_id=self.table_id,
+            fields=fields
+        )
+        
+        if result and "record" in result:
+            return {
+                "success": True,
+                "record_id": result["record"].get("id") or result["record"].get("record_id")
+            }
+        return {"success": False, "error": "创建失败"}
+    
+    def _update_record(self, record_id: str, fields: Dict) -> Dict[str, Any]:
+        """
+        更新记录 - 真正调用飞书 API
+        """
+        result = self._call_tool(
+            "update",
+            app_token=self.app_token,
+            table_id=self.table_id,
+            record_id=record_id,
+            fields=fields
+        )
+        
+        if result and "record" in result:
+            return {"success": True}
+        return {"success": False, "error": "更新失败"}
+    
+    def _list_records(self, filter_dict: Dict = None, limit: int = 500) -> List[Dict]:
+        """
+        查询记录列表 - 真正调用飞书 API
+        """
+        params = {
+            "action": "list",
+            "app_token": self.app_token,
+            "table_id": self.table_id,
+            "page_size": min(limit, 500)
+        }
+        
+        if filter_dict:
+            params["filter"] = filter_dict
+        
+        result = self._call_tool("list", **params)
+        
+        if result and "records" in result:
+            return result["records"]
+        return []
+    
+    def _get_record_by_msg_id(self, msg_id: str) -> Optional[Dict]:
+        """
+        根据 msg_id 查询记录 - 真正调用飞书 API
+        """
+        records = self._list_records({
+            "conjunction": "and",
+            "conditions": [
+                {"field_name": "msg_id", "operator": "is", "value": [msg_id]}
+            ]
+        }, limit=1)
+        
+        if records:
+            return {
+                "record_id": records[0].get("record_id") or records[0].get("id"),
+                "fields": records[0].get("fields", {})
+            }
+        return None
+    
+    def _call_tool_method(self, action: str, **params):
+        """内部方法，用于父类调用"""
+        return self._call_tool(action, **params)
 
 
 class OpenClawBotRegistry(BotRegistry):
     """
-    与 OpenClaw 集成的 BotRegistry
+    与 OpenClaw 集成的 BotRegistry - 真正调用飞书 API
+    
+    使用示例:
+        from scripts.relay_client import OpenClawBotRegistry
+        
+        registry = OpenClawBotRegistry(app_token, table_id_registry)
+        
+        # 绑定 OpenClaw 工具
+        registry.set_tool_caller(feishu_bitable_app_table_record)
+        
+        # 这些方法会真正调用飞书 API
+        registry.auto_register(bot_id="ou_xxx", bot_name="MyBot")
+        bots = registry.get_all_bots()
     """
     
     def __init__(self, app_token: str, table_id: str):
         super().__init__(app_token, table_id)
+        self._tool_caller = None
         
     def set_tool_caller(self, caller):
-        """设置工具调用器"""
+        """
+        设置工具调用器
+        
+        Args:
+            caller: feishu_bitable_app_table_record 函数
+        """
         self._tool_caller = caller
+    
+    def _call_tool(self, action: str, **params) -> Dict[str, Any]:
+        """调用 OpenClaw 工具"""
+        if self._tool_caller:
+            return self._tool_caller(action, **params)
+        # 回退到父类的 mock 实现
+        if action == "list":
+            return {"records": []}
+        elif action == "create":
+            return {"record": {"id": "mock_id"}}
+        elif action == "update":
+            return {"record": {"id": params.get("record_id")}}
+        return {}
+    
+    def _list_records(self, filter_dict: Dict = None, limit: int = 500) -> List[Dict]:
+        """查询记录列表 - 真正调用飞书 API"""
+        params = {
+            "action": "list",
+            "app_token": self.app_token,
+            "table_id": self.table_id,
+            "page_size": min(limit, 500)
+        }
+        
+        if filter_dict:
+            params["filter"] = filter_dict
+        
+        result = self._call_tool("list", **params)
+        return result.get("records", [])
+    
+    def _create_record(self, fields: Dict) -> Dict[str, Any]:
+        """创建记录 - 真正调用飞书 API"""
+        result = self._call_tool(
+            "create",
+            app_token=self.app_token,
+            table_id=self.table_id,
+            fields=fields
+        )
+        
+        if result and "record" in result:
+            return {
+                "success": True,
+                "record_id": result["record"].get("id") or result["record"].get("record_id")
+            }
+        return {"success": False, "error": "创建失败"}
+    
+    def _update_record(self, record_id: str, fields: Dict) -> Dict[str, Any]:
+        """更新记录 - 真正调用飞书 API"""
+        result = self._call_tool(
+            "update",
+            app_token=self.app_token,
+            table_id=self.table_id,
+            record_id=record_id,
+            fields=fields
+        )
+        
+        if result and "record" in result:
+            return {"success": True}
+        return {"success": False, "error": "更新失败"}
+
+
+def create_openclaw_client(app_token: str, table_id: str, tool_caller=None):
+    """
+    创建真正可用的 OpenClaw 客户端
+    
+    使用示例:
+        # 在 OpenClaw Skill 中
+        from scripts.relay_client import create_openclaw_client
+        
+        client = create_openclaw_client(
+            app_token="xxx",
+            table_id="xxx",
+            tool_caller=feishu_bitable_app_table_record  # 传入 OpenClaw 工具
+        )
+        
+        # 现在可以真正写入和读取 Bitable
+        client.write_message({...})
+        messages = client.poll_messages(receiver_id="ou_xxx")
+    
+    Args:
+        app_token: Bitable app token
+        table_id: 表 ID
+        tool_caller: feishu_bitable_app_table_record 函数，如果为 None 则使用 mock
+    
+    Returns:
+        OpenClawRelayClient 实例
+    """
+    client = OpenClawRelayClient(app_token, table_id)
+    if tool_caller:
+        client.set_tool_caller(tool_caller)
+    return client
 
 
 if __name__ == "__main__":

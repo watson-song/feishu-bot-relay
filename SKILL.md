@@ -304,87 +304,125 @@ python scripts/poll_messages.py --once
 
 ### ⚠️ 重要：如何使用本 Skill
 
-本 Skill 提供 **两种使用方式**：
+本 Skill 提供 **三种使用方式**：
 
 | 方式 | 适用场景 | 说明 |
 |------|---------|------|
-| **直接调用工具**（推荐） | OpenClaw Skill | 直接使用 `feishu_bitable_*` 工具 |
-| **使用 SDK** | 独立运行 | 使用 `relay_client.py` 框架，需实现 API 调用 |
-
-**为什么 relay_client.py 是模拟实现？**
-
-`relay_client.py` 是**框架/SDK**，不是可直接运行的完整实现：
-- ✅ 提供业务逻辑封装（锁、状态流转、去重）
-- ✅ 提供接口定义
-- ⚠️ `_create_record`、`_update_record` 等是**模拟实现**
-- 实际使用时需要替换为真实 API 调用
+| **方式 1: SDK + 工具绑定**（推荐） | OpenClaw Skill | 使用 `OpenClawRelayClient`，自动调用工具 |
+| **方式 2: 直接调用工具** | OpenClaw Skill | 直接使用 `feishu_bitable_*` 工具 |
+| **方式 3: SDK 框架** | 独立运行 | 使用 `RelayClient` 基类，需自己实现 API 调用 |
 
 ---
 
-### 方式 1：在 OpenClaw 中直接调用工具（推荐）
+### 方式 1：使用 OpenClawRelayClient（推荐）
 
-在 OpenClaw Skill 中，**不要**使用 `relay_client.py` 的模拟方法，而是直接调用 OpenClaw 提供的 `feishu_bitable_*` 工具：
+使用 Skill 提供的 `OpenClawRelayClient` 类，它继承自框架但实现了真正的 API 调用：
+
+```python
+from scripts.relay_client import OpenClawRelayClient, OpenClawBotRegistry
+
+# 初始化客户端（在 OpenClaw Skill 中）
+client = OpenClawRelayClient(
+    app_token="DIDybsDewa1pjnsSFkLcq3eonLh",
+    table_id="tbllWOJleehmXMVw"
+)
+
+# 绑定 OpenClaw 工具（关键！）
+client.set_tool_caller(feishu_bitable_app_table_record)
+
+# 现在可以真正写入和读取 Bitable
+result = client.write_message({
+    "msg_id": str(uuid.uuid4()),
+    "chat_id": "oc_xxx",
+    "sender_id": "ou_xxx",
+    "receiver_id": "ou_yyy",
+    "content": "消息内容"
+})
+
+# 轮询消息
+messages = client.poll_messages(receiver_id="ou_yyy")
+for msg in messages:
+    if client.acquire_lock(msg["record_id"], "instance-1"):
+        # 处理消息
+        client.update_status(msg["record_id"], "已完成", "回复内容")
+
+# 注册表同理
+registry = OpenClawBotRegistry(app_token, table_id_registry)
+registry.set_tool_caller(feishu_bitable_app_table_record)
+registry.auto_register(bot_id="ou_xxx", bot_name="MyBot")
+```
+
+**或者使用便捷函数：**
+
+```python
+from scripts.relay_client import create_openclaw_client
+
+client = create_openclaw_client(
+    app_token="xxx",
+    table_id="xxx",
+    tool_caller=feishu_bitable_app_table_record  # 传入工具函数
+)
+
+# 直接可用
+client.write_message({...})
+```
+
+---
+
+### 方式 2：直接调用工具
+
+如果你不想使用 SDK，可以直接调用 OpenClaw 工具：
 
 ```python
 # 写入消息
-def write_message(app_token, table_id, message):
-    result = feishu_bitable_app_table_record(
-        action="create",
-        app_token=app_token,
-        table_id=table_id,
-        fields={
-            "msg_id": message["msg_id"],
-            "chat_id": message["chat_id"],
-            "sender_id": message["sender_id"],
-            "receiver_id": message["receiver_id"],
-            "content": message["content"],
-            "status": "待处理",
-            "created_at": int(time.time() * 1000)
-        }
-    )
-    return result
+feishu_bitable_app_table_record(
+    action="create",
+    app_token=app_token,
+    table_id=table_id,
+    fields={...}
+)
 
 # 查询消息
-def poll_messages(app_token, table_id, receiver_id):
-    result = feishu_bitable_app_table_record(
-        action="list",
-        app_token=app_token,
-        table_id=table_id,
-        filter={
-            "conjunction": "and",
-            "conditions": [
-                {"field_name": "receiver_id", "operator": "is", "value": [receiver_id]},
-                {"field_name": "status", "operator": "is", "value": ["待处理"]}
-            ]
-        }
-    )
-    return result.get("records", [])
+feishu_bitable_app_table_record(
+    action="list",
+    app_token=app_token,
+    table_id=table_id,
+    filter={...}
+)
 ```
-
-**这是推荐的使用方式**，因为：
-- ✅ 直接调用真实的飞书 API
-- ✅ 无需实现 `_create_record` 等模拟方法
-- ✅ 简单直接
 
 ---
 
-### 方式 2：使用 SDK 框架（独立运行）
+### 方式 3：SDK 框架（需自己实现）
 
-如果你要在 OpenClaw 之外独立运行，可以使用 `relay_client.py` 框架，但需要实现 API 调用层：
+`RelayClient` 基类提供框架，但 `_create_record` 等方法是模拟实现：
 
 ```python
 from scripts.relay_client import RelayClient
 
 class MyRelayClient(RelayClient):
     def _create_record(self, fields):
-        # 实现真实的创建记录逻辑
-        # 例如：使用 requests 调用飞书 API
-        pass
-    
-    def _update_record(self, record_id, fields):
-        # 实现真实的更新记录逻辑
+        # 自己实现 API 调用
         pass
 ```
+
+**注意：** 除非你要在 OpenClaw 之外独立运行，否则建议使用 **方式 1** 或 **方式 2**。
+
+---
+
+### 为什么有模拟实现？
+
+`relay_client.py` 中的 `RelayClient` 基类确实有 mock 实现：
+- ✅ 提供业务逻辑封装（锁、状态流转、去重）
+- ✅ 提供接口定义
+- ⚠️ `_create_record`、`_update_record` 等是**模拟实现**
+
+**设计原因：**
+1. **解耦** - 业务逻辑不依赖具体 API 实现
+2. **可移植** - 同一套逻辑可用于不同环境
+3. **可测试** - 模拟实现便于单元测试
+
+**解决方案：** 使用 `OpenClawRelayClient`（方式 1），它已经实现了真正的 API 调用。
 
 ---
 
